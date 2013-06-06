@@ -129,3 +129,5 @@ tools/vmifs/Makefile.in
 tools/vmifs/vmifs
 tools/vmifs/vmifs.o
 ylwrap
+/.cproject
+/.project
