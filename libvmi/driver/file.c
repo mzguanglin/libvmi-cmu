@@ -67,7 +67,8 @@ file_get_memory(
 {
     void *memory = 0;
 
-    if (paddr + length >= vmi->size) {
+    if (paddr + length > vmi->size) { /* LibVMI bug fix: modify comparison operator from ">=" to ">"
+                                       so that we can read the last page. -Guanglin */
         dbprint
             ("--%s: request for PA range [0x%.16"PRIx64"-0x%.16"PRIx64"] reads past end of file\n",
              __FUNCTION__, paddr, paddr + length);
