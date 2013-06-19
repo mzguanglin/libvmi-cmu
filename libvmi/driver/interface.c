@@ -325,9 +325,10 @@ driver_init_mode(
         return VMI_FAILURE;
     }
     else if (count > 1) {
-        errprint
-            ("Found more than one VMM or file to use,\nplease specify what you want instead of using VMI_AUTO.\n");
-        return VMI_FAILURE;
+    	vmi->mode = VMI_FILE;
+        printf
+            ("VMI Warning: Found more than one VMM or file to use,\nwill use VMI_FILE.\n");
+        return VMI_SUCCESS;
     }
     else {  // count == 1
         return VMI_SUCCESS;

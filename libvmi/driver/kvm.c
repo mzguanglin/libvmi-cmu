@@ -409,7 +409,7 @@ kvm_init(
     char *status = exec_memory_access(kvm_get_instance(vmi));
 
     if (VMI_SUCCESS == exec_memory_access_success(status)) {
-        dbprint("--kvm: using custom patch for fast memory access\n");
+        printf("--kvm: using custom patch for fast memory access\n");
         memory_cache_init(vmi, kvm_get_memory_patch, kvm_release_memory,
                           1);
         if (status)
@@ -417,7 +417,7 @@ kvm_init(
         return init_domain_socket(kvm_get_instance(vmi));
     }
     else {
-        dbprint
+        printf
             ("--kvm: didn't find patch, falling back to slower native access\n");
         memory_cache_init(vmi, kvm_get_memory_native,
                           kvm_release_memory, 1);

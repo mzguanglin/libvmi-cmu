@@ -373,10 +373,11 @@ get_memory_layout(
     int pae, pse, lme;
     uint8_t msr_efer_lme = 0;   // LME bit in MSR_EFER
 
+    // remove bar for VMI_FILE. -Guanglin
     /* skip all of this for files */
-    if (VMI_FILE == vmi->mode) {
-        goto _exit;
-    }
+    //if (VMI_FILE == vmi->mode) {
+    //    goto _exit;
+    //}
 
     /* get the control register values */
     if (driver_get_vcpureg(vmi, &cr0, CR0, 0) == VMI_FAILURE) {
@@ -714,7 +715,7 @@ vmi_init_private(
                                         &((*vmi)->lme));
 
         if (VMI_FAILURE == status) {
-            dbprint
+            printf  /* prompt if we can get CPU registers from KVM instance when using VMI_FILE. -Guanglin */
                 ("**Failed to get memory layout for VM. Trying heuristic method.\n");
             // fall-through
         }   // if
