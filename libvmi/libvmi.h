@@ -76,6 +76,8 @@ typedef uint32_t vmi_mode_t;
 
 #define VMI_FILE (1 << 3)  /**< libvmi is viewing a file on disk */
 
+#define VMI_SNAPSHOT (1 << 4)  /**< libvmi is viewing a snapshot on disk */
+
 #define VMI_INIT_PARTIAL  (1 << 16) /**< init enough to view physical addresses */
 
 #define VMI_INIT_COMPLETE (1 << 17) /**< full initialization */
@@ -339,6 +341,16 @@ status_t vmi_init_complete_custom(
     vmi_instance_t *vmi,
     uint32_t flags,
     vmi_config_t config);
+
+/**
+ * Snapshot guest VM for fast VMI.
+ */
+status_t vmi_snapshot_vm(vmi_instance_t vmi);
+
+/**
+ * Destroy guest VM snapshot file.
+ */
+status_t vmi_snapshot_destroy(vmi_instance_t vmi);
 
 /**
  * Destroys an instance by freeing memory and closing any open handles.

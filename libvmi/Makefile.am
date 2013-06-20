@@ -14,6 +14,7 @@ c_sources = \
     strmatch.c \
     write.c \
     driver/file.c \
+    driver/snapshot.c \
     driver/interface.c \
     driver/kvm.c \
     driver/memory_cache.c \

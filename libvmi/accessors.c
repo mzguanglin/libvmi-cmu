@@ -27,6 +27,7 @@
 #include "libvmi.h"
 #include "private.h"
 #include "driver/interface.h"
+#include "driver/snapshot.h"
 
 page_mode_t
 vmi_get_page_mode(
@@ -212,6 +213,79 @@ vmi_resume_vm(
     vmi_instance_t vmi)
 {
     return driver_resume_vm(vmi);
+}
+
+
+
+
+//----------------------------------------------------------------------------
+// Helper functions (from kvm driver) -Guanglin
+
+//
+// QMP Command Interactions
+static char *
+exec_qmp_cmd(
+	snapshot_instance_t *fileInstance,
+    char *query)
+{
+    FILE *p;
+    char *output = safe_malloc(20000);
+    size_t length = 0;
+
+    char *name = (char *) fileInstance -> domainName;
+    int cmd_length = strlen(name) + strlen(query) + 29;
+    char *cmd = safe_malloc(cmd_length);
+
+    snprintf(cmd, cmd_length, "virsh qemu-monitor-command %s %s", name,
+             query);
+    dbprint("--qmp: %s\n", cmd);
+
+    p = popen(cmd, "r");
+    if (NULL == p) {
+        dbprint("--failed to run QMP command\n");
+        free(cmd);
+        return NULL;
+    }
+
+    length = fread(output, 1, 20000, p);
+    pclose(p);
+    free(cmd);
+
+    if (length == 0) {
+        free(output);
+        return NULL;
+    }
+    else {
+        return output;
+    }
+}
+
+static char *
+exec_pmemsave(
+	snapshot_instance_t *fileInstance)
+{
+    char *query =
+        "'{\"execute\": \"pmemsave\", \"arguments\": {\"val\": 0, \"size\": 1073741824, \"filename\": \"/tmp/winxpsp1-1-2-3\"}}'";
+    return exec_qmp_cmd(fileInstance, query);
+}
+
+status_t vmi_snapshot_vm(vmi_instance_t vmi){
+
+	if (VMI_SNAPSHOT != vmi->mode)
+		return VMI_FAILURE;
+
+	vmi_pause_vm(vmi);
+
+	char *memsave = exec_pmemsave(vmi->driver);
+	printf("%s\n", memsave);
+	return VMI_SUCCESS;
+}
+
+status_t vmi_snapshot_destroy(vmi_instance_t vmi){
+	if (VMI_SNAPSHOT != vmi->mode)
+		return VMI_FAILURE;
+
+	return 0;
 }
 
 char *

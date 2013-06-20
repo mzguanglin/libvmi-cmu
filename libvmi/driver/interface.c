@@ -29,6 +29,7 @@
 #include "driver/xen.h"
 #include "driver/kvm.h"
 #include "driver/file.h"
+#include "driver/snapshot.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -234,6 +235,38 @@ driver_file_setup(
 }
 
 static void
+driver_snapshot_setup(
+		vmi_instance_t vmi)
+{
+    vmi->driver = safe_malloc(sizeof(snapshot_instance_t));
+    memset(vmi->driver, 0, sizeof(snapshot_instance_t));
+    instance->init_ptr = &snapshot_init;
+    instance->destroy_ptr = &snapshot_destroy;
+    instance->get_id_from_name_ptr = NULL;  //TODO add get_id_from_name_ptr
+    instance->get_name_from_id_ptr = NULL;  //TODO add get_name_from_id_ptr
+    instance->get_id_ptr = NULL;    //TODO add get_id_ptr
+    instance->set_id_ptr = NULL;    //TODO add set_id_ptr
+    instance->check_id_ptr = NULL;     //TODO add check_id_ptr
+    instance->get_name_ptr = &snapshot_get_name;
+    instance->set_name_ptr = &snapshot_set_name;
+    instance->get_memsize_ptr = &snapshot_get_memsize;
+    instance->get_address_width_ptr = NULL;
+    instance->get_vcpureg_ptr = &snapshot_get_vcpureg;
+    instance->set_vcpureg_ptr = NULL;
+    instance->read_page_ptr = &snapshot_read_page;
+    instance->write_ptr = &snapshot_write;
+    instance->is_pv_ptr = &snapshot_is_pv;
+    instance->pause_vm_ptr = &snapshot_pause_vm;
+    instance->resume_vm_ptr = &snapshot_resume_vm;
+    instance->events_listen_ptr = NULL;
+    instance->set_reg_access_ptr = NULL;
+    instance->set_mem_access_ptr = NULL;
+    instance->start_single_step_ptr = NULL;
+    instance->stop_single_step_ptr = NULL;
+    instance->shutdown_single_step_ptr = NULL;
+}
+
+static void
 driver_null_setup(
     vmi_instance_t vmi)
 {
@@ -285,6 +318,9 @@ driver_get_instance(
         else if (VMI_FILE == vmi->mode) {
             driver_file_setup(vmi);
         }
+        else if (VMI_SNAPSHOT == vmi->mode) {
+        	driver_snapshot_setup(vmi);
+        }
         else {
             driver_null_setup(vmi);
         }
@@ -316,6 +352,11 @@ driver_init_mode(
         dbprint("--found file\n");
         vmi->mode = VMI_FILE;
         count++;
+    }
+    if (VMI_SUCCESS == snapshot_test(id, name)) {
+    	dbprint("--found snapshot eligibility\n");
+    	vmi->mode = VMI_SNAPSHOT;
+    	count++;
     }
 
     /* if we didn't see exactly one system, report error */

@@ -53,7 +53,7 @@ int main (int argc, char **argv)
     char *name = argv[1];
 
     /* initialize the libvmi library */
-    if (vmi_init(&vmi, VMI_AUTO | VMI_INIT_COMPLETE, name) == VMI_FAILURE) {
+    if (vmi_init(&vmi, VMI_SNAPSHOT | VMI_INIT_PARTIAL, name) == VMI_FAILURE) {
         printf("Failed to init LibVMI library.\n");
         return 1;
     }
@@ -87,11 +87,20 @@ int main (int argc, char **argv)
         }
     }
 
+
+    if (vmi_snapshot_vm(vmi) != VMI_SUCCESS) {
+        printf("Failed to snapshot VM\n");
+        goto error_exit;
+    } // if
+
+
     /* pause the vm for consistent memory access */
-    if (vmi_pause_vm(vmi) != VMI_SUCCESS) {
+    /*if (vmi_pause_vm(vmi) != VMI_SUCCESS) {
         printf("Failed to pause VM\n");
         goto error_exit;
     } // if
+    */
+
 
     /* demonstrate name and id accessors */
     char *name2 = vmi_get_name(vmi);
@@ -178,8 +187,10 @@ int main (int argc, char **argv)
     error_exit: if (procname)
         free(procname);
 
+    vmi_snapshot_destroy(vmi);
+
     /* resume the vm */
-    vmi_resume_vm(vmi);
+    //vmi_resume_vm(vmi);
 
     /* cleanup any memory associated with the LibVMI instance */
     vmi_destroy(vmi);
