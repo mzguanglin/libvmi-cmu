@@ -1268,6 +1268,17 @@ status_t vmi_set_vcpureg(
     unsigned long vcpu);
 
 /**
+ * Snapshot guest VM for fast VMI.
+ */
+status_t vmi_snapshot_vm(vmi_instance_t vmi);
+
+/**
+ * Destroy guest VM snapshot file.
+ */
+status_t vmi_snapshot_destroy(vmi_instance_t vmi);
+
+
+/**
  * Pauses the VM.  Use vmi_resume_vm to resume the VM after pausing
  * it.  If accessing a memory file, this has no effect.
  *

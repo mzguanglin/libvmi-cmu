@@ -88,8 +88,8 @@ int main (int argc, char **argv)
     }
 
     /* pause the vm for consistent memory access */
-    if (vmi_pause_vm(vmi) != VMI_SUCCESS) {
-        printf("Failed to pause VM\n");
+    if (vmi_snapshot_vm(vmi) != VMI_SUCCESS) {
+        printf("Failed to snapshot VM\n");
         goto error_exit;
     } // if
 
@@ -179,7 +179,7 @@ int main (int argc, char **argv)
         free(procname);
 
     /* resume the vm */
-    vmi_resume_vm(vmi);
+    vmi_snapshot_destroy(vmi);
 
     /* cleanup any memory associated with the LibVMI instance */
     vmi_destroy(vmi);

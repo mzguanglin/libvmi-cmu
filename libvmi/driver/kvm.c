@@ -317,6 +317,50 @@ kvm_get_memory_native(
     return buf;
 }
 
+
+void *
+kvm_snapshot_get_memory(
+    vmi_instance_t vmi,
+    addr_t paddr,
+    uint32_t length)
+{
+    void *memory = 0;
+
+    if (paddr + length > vmi->size) { /* LibVMI bug fix: modify comparison operator from ">=" to ">"
+                                       so that we can read the last page. -Guanglin */
+        dbprint
+            ("--%s: request for PA range [0x%.16"PRIx64"-0x%.16"PRIx64"] reads past end of pmemsave file\n",
+             __FUNCTION__, paddr, paddr + length);
+        goto error_noprint;
+    }   // if
+
+    memory = safe_malloc(length);
+
+#if USE_MMAP
+    (void) memcpy(memory,
+                  ((uint8_t *) file_get_instance(vmi)->map) + paddr,
+                  length);
+#else
+    if (paddr != lseek(kvm_get_instance(vmi)->fd, paddr, SEEK_SET)) {
+        goto error_print;
+    }
+    if (length != read(kvm_get_instance(vmi)->fd, memory, length)) {
+        goto error_print;
+    }
+#endif // USE_MMAP
+
+    return memory;
+
+error_print:
+    dbprint("%s: failed to read %d bytes at "
+            "PA (offset) 0x%.16"PRIx64" [VM size 0x%.16"PRIx64"]\n", __FUNCTION__,
+            length, paddr, vmi->size);
+error_noprint:
+    if (memory)
+        free(memory);
+    return NULL;
+}
+
 void
 kvm_release_memory(
     void *memory,
@@ -844,6 +888,229 @@ kvm_resume_vm(
     return VMI_SUCCESS;
 }
 
+static char *
+exec_pmemsave(
+	    kvm_instance_t* ki, unsigned long memSize)
+{
+
+    char *query = (char *) safe_malloc(512);
+
+    sprintf(query, "'{\"execute\": \"pmemsave\", \"arguments\": {\"val\": 0,"
+    		" \"size\": %ld, \"filename\": \"%s\"}}'", memSize,
+    		ki->filename);
+
+    char *output = exec_qmp_cmd(ki, query);
+
+    free(query);
+    return output;
+}
+
+static status_t
+exec_pmemsave_success(
+		char* status)
+{
+	// TODO:
+	/* verify pmemsave operation
+	    valid: libvirt (git master) {"return":{},"id":"libvirt-356"}
+	    invalid: libvirt-bin (ubuntu 12.04 apt-get) need to collect return value.
+	*/
+
+	if (NULL == status) {
+        return VMI_FAILURE;
+    }
+
+    char *ptr = strcasestr(status, "CommandNotFound");
+
+	free(status);
+
+    if (NULL == ptr) {
+        return VMI_SUCCESS;
+    }
+    else {
+        return VMI_FAILURE;
+    }
+}
+
+static status_t
+mmap_snapshot_file(
+	    vmi_instance_t vmi)
+{
+#define USE_MMAP 1
+
+    FILE *fhandle = NULL;
+    int fd = -1;
+    kvm_instance_t *ki = kvm_get_instance(vmi);
+
+    /* open handle to pmemsave file */
+    if ((fhandle = fopen(ki->filename, "rb")) == NULL) {
+        errprint("Failed to open pmemsave file for reading.\n");
+        goto fail;
+    }
+    fd = fileno(fhandle);
+
+    ki->fhandle = fhandle;
+    ki->fd = fd;
+
+    // reset memory cache.
+   memory_cache_destroy(vmi);
+   memory_cache_init(vmi, kvm_snapshot_get_memory, kvm_release_memory,
+                      ULONG_MAX);
+    //    memory_cache_init(vmi, file_get_memory, file_release_memory, 0);
+
+#if USE_MMAP
+    /* try memory mapped file I/O */
+    unsigned long size;
+
+    if (VMI_FAILURE == kvm_get_memsize(vmi, &size)) {
+        goto fail;
+    }   // if
+
+    int mmap_flags = (MAP_PRIVATE | MAP_NORESERVE | MAP_POPULATE);
+
+#ifdef MMAP_HUGETLB // since kernel 2.6.32
+    mmap_flags |= MMAP_HUGETLB;
+#endif // MMAP_HUGETLB
+
+    void *map = mmap(NULL,  // addr
+                     size,  // len
+                     PROT_READ, // prot
+                     mmap_flags,    // flags
+                     fd,    // file descriptor
+                     (off_t) 0);    // offset
+
+    if (MAP_FAILED == map) {
+        perror("Failed to mmap pmemsave file");
+        goto fail;
+    }
+    ki->map = map;
+
+    // Note: madvise(.., MADV_SEQUENTIAL | MADV_WILLNEED) does not seem to
+    // improve performance
+
+#endif // USE_MMAP
+
+    vmi->hvm = 0;
+    return VMI_SUCCESS;
+
+fail:
+    kvm_destroy_snapshot_vm(vmi);
+    return VMI_FAILURE;
+}
+
+
+status_t
+kvm_snapshot_vm(
+    vmi_instance_t vmi)
+{
+    printf("snapshot vm\n");
+
+	kvm_instance_t *ki = kvm_get_instance(vmi);
+
+	// 1. pause vm;
+	if (VMI_FAILURE == vmi_pause_vm(vmi)) {
+		printf("fail to pause VM before snapshot, may cause inconsistant state\n");
+	}
+
+	// 2. create pmemsave file;
+	//  2.1. generate random file path;
+    char *tmpfile = tempnam("/tmp", "kvmpmemsave-");
+	if (ki->filename) free (ki->filename);
+	ki->filename = strdup(tmpfile);
+	free(tmpfile);
+
+	//  2.2. get physical memory size;
+    unsigned long size;
+    if (VMI_FAILURE == kvm_get_memsize(vmi, &size)) {
+    	return VMI_FAILURE;
+    }
+
+    //  2.3. write pmemsave file;
+    printf("start writing pmemsave file\n");
+	char *pmemsave =  exec_pmemsave(ki, size);
+	if (VMI_FAILURE == exec_pmemsave_success(pmemsave)) {
+		printf("fail to create pmemsave snapshot file\n");
+		return VMI_FAILURE;
+	}
+    printf("finish writing pmemsave file\n");
+
+	// resume vm;
+	if (VMI_FAILURE == vmi_resume_vm(vmi)) {
+		printf("fail to resume VM after snapshot\n");
+		return VMI_FAILURE;
+	}
+
+    printf("start mmapping pmemsave file\n");
+
+	// open and mmap file;
+	if (VMI_FAILURE == mmap_snapshot_file(vmi)) {
+		return VMI_FAILURE;
+	}
+
+    printf("finish mmapping pmemsave file\n");
+
+	// reset cache subsystem, has been done while mmap snapshot file
+    //memory_cache_destroy(vmi);
+    //memory_cache_init(vmi, kvm_snapshot_get_memory, kvm_release_memory,
+    //                  ULONG_MAX);
+
+
+    return VMI_SUCCESS;
+}
+
+status_t
+kvm_destroy_snapshot_vm(
+    vmi_instance_t vmi)
+{
+
+    printf("destroy snapshot\n");
+
+    kvm_instance_t *ki = kvm_get_instance(vmi);
+
+	// reset cache subsystem
+    memory_cache_destroy(vmi);
+
+    char *status = exec_memory_access(kvm_get_instance(vmi));
+
+     if (VMI_SUCCESS == exec_memory_access_success(status)) {
+         printf("--kvm: using custom patch for fast memory access\n");
+         memory_cache_init(vmi, kvm_get_memory_patch, kvm_release_memory,
+                           1);
+         if (status)
+             free(status);
+     }
+     else {
+         printf
+             ("--kvm: didn't find patch, falling back to slower native access\n");
+         memory_cache_init(vmi, kvm_get_memory_native,
+                           kvm_release_memory, 1);
+         if (status)
+             free(status);
+     }
+
+	// munmap and close file;
+ #if USE_MMAP
+     if (ki->map) {
+         (void) munmap(ki->map, vmi->size);
+         ki->map = 0;
+     }
+ #endif // USE_MMAP
+     // ki->fhandle refers to ki->fd; closing both would be an error
+     if (ki->fhandle) {
+         fclose(ki->fhandle);
+         ki->fhandle = 0;
+         ki->fd = 0;
+     }
+
+	// delete pmemsave file;
+     if (remove(ki->filename))
+    	 printf("fail to delete pmemsave file\n");
+
+
+
+     return VMI_SUCCESS;
+}
+
+
 //////////////////////////////////////////////////////////////////////
 #else
 
@@ -977,6 +1244,18 @@ kvm_pause_vm(
 
 status_t
 kvm_resume_vm(
+    vmi_instance_t vmi)
+{
+    return VMI_FAILURE;
+}
+
+status_t kvm_snapshot_vm(
+    vmi_instance_t vmi)
+{
+    return VMI_FAILURE;
+}
+
+status_t kvm_destroy_snapshot_vm(
     vmi_instance_t vmi)
 {
     return VMI_FAILURE;

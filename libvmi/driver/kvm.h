@@ -35,6 +35,17 @@ typedef struct kvm_instance {
     char *name;
     char *ds_path;
     int socket_fd;
+
+
+
+    FILE *fhandle;       /**< handle to the memory image file */
+
+    int fd;              /**< file descriptor to the memory image file */
+
+    char *filename;      /**< name of the file being accessed */
+
+    void *map;           /**< memory mapped file */
+
 } kvm_instance_t;
 
 #else
@@ -97,3 +108,8 @@ status_t kvm_pause_vm(
     vmi_instance_t vmi);
 status_t kvm_resume_vm(
     vmi_instance_t vmi);
+status_t kvm_snapshot_vm(
+    vmi_instance_t vmi);
+status_t kvm_destroy_snapshot_vm(
+    vmi_instance_t vmi);
+

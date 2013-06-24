@@ -200,6 +200,30 @@ vmi_set_vcpureg(
     return driver_set_vcpureg(vmi, value, reg, vcpu);
 }
 
+
+status_t vmi_snapshot_vm(vmi_instance_t vmi)
+{
+	if (vmi->mode != VMI_KVM) {
+		printf("Error: Snapshot only supports VMI_KVM driver\n");
+		return VMI_FAILURE;
+	}
+
+	return driver_snapshot_vm(vmi);
+}
+
+
+status_t vmi_snapshot_destroy(vmi_instance_t vmi)
+{
+	if (vmi->mode != VMI_KVM) {
+		printf("Error: Snapshot only supports VMI_KVM driver\n");
+		return VMI_FAILURE;
+	}
+
+	return driver_destroy_snapshot_vm(vmi);
+
+}
+
+
 status_t
 vmi_pause_vm(
     vmi_instance_t vmi)
