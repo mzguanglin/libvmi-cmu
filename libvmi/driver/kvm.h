@@ -36,8 +36,6 @@ typedef struct kvm_instance {
     char *ds_path;
     int socket_fd;
 
-
-
     FILE *fhandle;       /**< handle to the memory image file */
 
     int fd;              /**< file descriptor to the memory image file */
@@ -45,6 +43,9 @@ typedef struct kvm_instance {
     char *filename;      /**< name of the file being accessed */
 
     void *map;           /**< memory mapped file */
+
+    char *cpuRegisterFilename; /**< name of the cpu register file being accessed */
+    char* cpuRegistersStr;  /**< cpu registers string from qmp info register */
 
 } kvm_instance_t;
 

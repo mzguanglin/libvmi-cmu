@@ -441,6 +441,14 @@ kvm_init(
     kvm_get_instance(vmi)->conn = conn;
     kvm_get_instance(vmi)->dom = dom;
     kvm_get_instance(vmi)->socket_fd = 0;
+
+    kvm_get_instance(vmi)->fhandle = NULL;
+    kvm_get_instance(vmi)->fd = 0;
+    kvm_get_instance(vmi)->filename = NULL;
+    kvm_get_instance(vmi)->map = NULL;
+    kvm_get_instance(vmi)->cpuRegisterFilename = NULL;
+    kvm_get_instance(vmi)->cpuRegistersStr = NULL;
+
     vmi->hvm = 1;
 
     //get the VCPU count from virDomainInfo structure
@@ -647,7 +655,18 @@ kvm_get_vcpureg(
     registers_t reg,
     unsigned long vcpu)
 {
-    char *regs = exec_info_registers(kvm_get_instance(vmi));
+	char *regs = NULL;
+
+	// if we have loaded cpu register values from file, then read from the loaded string.
+	kvm_instance_t *ki = kvm_get_instance(vmi);
+	if (ki->cpuRegistersStr != NULL) {
+		regs = strdup(ki->cpuRegistersStr);
+		dbprint("read cpu regs from %s\n", ki->cpuRegisterFilename);
+	}
+	else
+		regs = exec_info_registers(kvm_get_instance(vmi));
+
+
     status_t ret = VMI_SUCCESS;
 
     if (VMI_PM_IA32E == vmi->page_mode) {
@@ -1013,7 +1032,7 @@ kvm_snapshot_vm(
 
 	// 2. create pmemsave file;
 	//  2.1. generate random file path;
-    char *tmpfile = tempnam("/tmp", "kvmpmemsave-");
+    char *tmpfile = tempnam("/tmp", "kvm-");
 	if (ki->filename) free (ki->filename);
 	ki->filename = strdup(tmpfile);
 	free(tmpfile);
@@ -1033,7 +1052,31 @@ kvm_snapshot_vm(
 	}
     printf("finish writing pmemsave file\n");
 
-	// resume vm;
+    // 3. create cpu register file;
+    //  3.1 get appending file path;
+    char tmpCpuFileName[256] = "";
+    strcat(tmpCpuFileName, "/tmp");
+    strcat(tmpCpuFileName, ki->filename + strlen("/tmp"));
+    strcat(tmpCpuFileName, ".cpu");
+	if (ki->cpuRegisterFilename) free (ki->cpuRegisterFilename);
+	ki->cpuRegisterFilename = strdup(tmpCpuFileName);
+
+	//  3.2 write cpu register file;
+	char* cpuregs = exec_info_registers(ki);
+	//ki->cpuRegistersStr = cpuregs;
+    FILE *fhandle = NULL;
+    if ((fhandle = fopen(ki->cpuRegisterFilename, "w+")) == NULL) {
+        errprint("Failed to open cpuRegisterFilename file for writing., errno = %d\n", errno);
+        goto fail;
+    }
+    uint32_t cpuRegStrLen = strlen(cpuregs);
+    size_t writeCount = fwrite(&cpuRegStrLen, sizeof(uint32_t), 1, fhandle);
+    size_t strWriteCount = fwrite(cpuregs, sizeof(char), cpuRegStrLen, fhandle);
+    fclose(fhandle);
+    free(cpuregs);
+    cpuregs = NULL;
+
+	// 4. resume vm;
 	if (VMI_FAILURE == vmi_resume_vm(vmi)) {
 		printf("fail to resume VM after snapshot\n");
 		return VMI_FAILURE;
@@ -1041,20 +1084,29 @@ kvm_snapshot_vm(
 
     printf("start mmapping pmemsave file\n");
 
-	// open and mmap file;
+	// 5. load pmemsave and cpu regs file
+    //  5.1. open and mmap file;
 	if (VMI_FAILURE == mmap_snapshot_file(vmi)) {
 		return VMI_FAILURE;
 	}
-
     printf("finish mmapping pmemsave file\n");
 
-	// reset cache subsystem, has been done while mmap snapshot file
-    //memory_cache_destroy(vmi);
-    //memory_cache_init(vmi, kvm_snapshot_get_memory, kvm_release_memory,
-    //                  ULONG_MAX);
-
+    //  5.2 open and load cpu regs file;
+    if ((fhandle = fopen(ki->cpuRegisterFilename, "r")) == NULL) {
+        errprint("Failed to open cpuRegisterFilename file for reading., errno = %d\n", errno);
+        goto fail;
+    }
+    size_t readCount = fread(&cpuRegStrLen, sizeof(uint32_t), 1, fhandle);
+    cpuregs = safe_malloc(cpuRegStrLen);
+    size_t strReadCount = fread(cpuregs, sizeof(char), cpuRegStrLen, fhandle);
+	ki->cpuRegistersStr = cpuregs;
+    fclose(fhandle);
 
     return VMI_SUCCESS;
+
+    fail:
+    //TODO: clean up codes.
+    	return VMI_FAILURE;
 }
 
 status_t
@@ -1066,7 +1118,7 @@ kvm_destroy_snapshot_vm(
 
     kvm_instance_t *ki = kvm_get_instance(vmi);
 
-	// reset cache subsystem
+	// 1. reset cache subsystem
     memory_cache_destroy(vmi);
 
     char *status = exec_memory_access(kvm_get_instance(vmi));
@@ -1087,7 +1139,7 @@ kvm_destroy_snapshot_vm(
              free(status);
      }
 
-	// munmap and close file;
+	// 2. munmap and close file;
  #if USE_MMAP
      if (ki->map) {
          (void) munmap(ki->map, vmi->size);
@@ -1101,13 +1153,32 @@ kvm_destroy_snapshot_vm(
          ki->fd = 0;
      }
 
-	// delete pmemsave file;
+	// 3. delete pmemsave file;
      if (remove(ki->filename))
-    	 printf("fail to delete pmemsave file\n");
+    	 warnprint("fail to delete %s\n", ki->filename);
+     if (ki->filename) {
+    	 free(ki->filename);
+    	 ki->filename = NULL;
+     }
 
-
+     // 4. delete cpu regs file;
+     if (remove(ki->cpuRegisterFilename))
+    	 warnprint("fail to delete %s\n", ki->cpuRegisterFilename);
+     if (ki->cpuRegisterFilename) {
+    	 free(ki->cpuRegisterFilename);
+    	 ki->cpuRegisterFilename = NULL;
+     }
+     if (ki->cpuRegistersStr) {
+    	 free(ki->cpuRegistersStr);
+    	 ki->cpuRegistersStr = NULL;
+     }
 
      return VMI_SUCCESS;
+
+     fail:
+     //TODO: clean up codes.
+     return VMI_FAILURE;
+
 }
 
 
