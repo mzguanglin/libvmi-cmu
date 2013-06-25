@@ -647,7 +647,7 @@ status_t driver_snapshot_vm(
 {
     driver_instance_t ptrs = driver_get_instance(vmi);
 
-    if (NULL != ptrs && NULL != ptrs->pause_vm_ptr) {
+    if (NULL != ptrs && NULL != ptrs->snapshot_vm_ptr) {
         return ptrs->snapshot_vm_ptr(vmi);
     }
     else {
