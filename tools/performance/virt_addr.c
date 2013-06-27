@@ -47,6 +47,10 @@ int main(int argc, char **argv) {
 
 	/* initialize the xen access library */
 	vmi_init(&vmi, VMI_AUTO | VMI_INIT_COMPLETE, vm);
+    if (vmi_snapshot_vm(vmi) != VMI_SUCCESS) {
+        printf("Failed to snapshot VM\n");
+        return 0;
+    }
 	vaddr = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
 
 	for (i = 0; i < loops; ++i) {
@@ -60,6 +64,8 @@ int main(int argc, char **argv) {
 
 	avg_measurement(data, loops);
 
+
+    vmi_snapshot_destroy(vmi);
 	vmi_destroy(vmi);
 	free(data);
 	return 0;

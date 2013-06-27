@@ -48,6 +48,11 @@ int main(int argc, char **argv) {
 
 	/* initialize the xen access library */
 	vmi_init(&vmi, VMI_AUTO | VMI_INIT_COMPLETE, vm);
+    if (vmi_snapshot_vm(vmi) != VMI_SUCCESS) {
+        printf("Failed to snapshot VM\n");
+        goto error_exit;
+        return 0;
+    }
 
 	for (i = 0; i < loops; ++i) {
 		gettimeofday(&ktv_start, 0);
@@ -66,7 +71,9 @@ int main(int argc, char **argv) {
 
 	avg_measurement(data, loops);
 
-	error_exit: vmi_destroy(vmi);
+	error_exit:
+    vmi_snapshot_destroy(vmi);
+	vmi_destroy(vmi);
 	free(data);
 	return 0;
 }
