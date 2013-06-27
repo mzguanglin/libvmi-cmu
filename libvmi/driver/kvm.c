@@ -442,11 +442,10 @@ kvm_init(
     kvm_get_instance(vmi)->dom = dom;
     kvm_get_instance(vmi)->socket_fd = 0;
 
-    kvm_get_instance(vmi)->fhandle = NULL;
     kvm_get_instance(vmi)->fd = 0;
     kvm_get_instance(vmi)->filename = NULL;
     kvm_get_instance(vmi)->map = NULL;
-    kvm_get_instance(vmi)->cpuRegisterFilename = NULL;
+    kvm_get_instance(vmi)->cpuRegisterFilePath = NULL;
     kvm_get_instance(vmi)->cpuRegistersStr = NULL;
 
     vmi->hvm = 1;
@@ -661,7 +660,7 @@ kvm_get_vcpureg(
 	kvm_instance_t *ki = kvm_get_instance(vmi);
 	if (ki->cpuRegistersStr != NULL) {
 		regs = strdup(ki->cpuRegistersStr);
-		dbprint("read cpu regs from %s\n", ki->cpuRegisterFilename);
+		dbprint("read cpu regs from %s\n", ki->cpuRegisterFilePath);
 	}
 	else
 		regs = exec_info_registers(kvm_get_instance(vmi));
@@ -907,6 +906,31 @@ kvm_resume_vm(
     return VMI_SUCCESS;
 }
 
+
+#define MEASUREMENT
+
+#ifdef MEASUREMENT
+void print_measurement(struct timeval ktv_start, struct timeval ktv_end,
+		long int *diff) {
+
+	*diff =
+
+	(((long int) ktv_end.tv_usec - (long int) ktv_start.tv_usec)
+			+
+
+			(((long int) ktv_end.tv_sec % 1000000
+					- (long int) ktv_start.tv_sec % 1000000) * 1000000));
+
+	printf("%ld.%.6ld : %ld.%.6ld : %ld\n",
+
+	((long int) ktv_start.tv_sec) % 1000000, (long int) ktv_start.tv_usec,
+
+	((long int) ktv_end.tv_sec) % 1000000, (long int) ktv_end.tv_usec, *diff);
+
+}
+
+#endif
+
 static char *
 exec_pmemsave(
 	    kvm_instance_t* ki, unsigned long memSize)
@@ -951,38 +975,35 @@ exec_pmemsave_success(
 }
 
 static status_t
-mmap_snapshot_file(
-	    vmi_instance_t vmi)
+mmap_snapshot_dev(
+	    vmi_instance_t vmi, uint64_t memSize)
 {
-#define USE_MMAP 1
 
-    FILE *fhandle = NULL;
-    int fd = -1;
     kvm_instance_t *ki = kvm_get_instance(vmi);
 
-    /* open handle to pmemsave file */
-    if ((fhandle = fopen(ki->filename, "rb")) == NULL) {
-        errprint("Failed to open pmemsave file for reading.\n");
-        goto fail;
-    }
-    fd = fileno(fhandle);
+#define USE_MMAP 1
 
-    ki->fhandle = fhandle;
-    ki->fd = fd;
+    int shmSnapFd = NULL;
+
+    char devName[256] = "/";  // or "\" ?
+    strcat(devName, (char *) virDomainGetName(ki->dom));
+
+    if ((shmSnapFd = shm_open(devName, O_RDONLY, NULL)) < 0) {
+    	errprint("fail in shm_open %s", devName);
+    	goto fail;
+    }
+    ki->fd = shmSnapFd;
+
+    ftruncate(shmSnapFd, memSize);
 
     // reset memory cache.
    memory_cache_destroy(vmi);
    memory_cache_init(vmi, kvm_snapshot_get_memory, kvm_release_memory,
                       ULONG_MAX);
-    //    memory_cache_init(vmi, file_get_memory, file_release_memory, 0);
 
 #if USE_MMAP
     /* try memory mapped file I/O */
-    unsigned long size;
 
-    if (VMI_FAILURE == kvm_get_memsize(vmi, &size)) {
-        goto fail;
-    }   // if
 
     int mmap_flags = (MAP_PRIVATE | MAP_NORESERVE | MAP_POPULATE);
 
@@ -990,17 +1011,36 @@ mmap_snapshot_file(
     mmap_flags |= MMAP_HUGETLB;
 #endif // MMAP_HUGETLB
 
+#ifdef MEASUREMENT
+	struct timeval ktv_start;
+	struct timeval ktv_end;
+	long int diff;
+
+	gettimeofday(&ktv_start, 0);
+#endif
+
     void *map = mmap(NULL,  // addr
-                     size,  // len
+                     memSize,  // len
                      PROT_READ, // prot
                      mmap_flags,    // flags
-                     fd,    // file descriptor
+                     ki->fd,    // file descriptor
                      (off_t) 0);    // offset
 
     if (MAP_FAILED == map) {
-        perror("Failed to mmap pmemsave file");
+        perror("Failed to mmap snapshot dev");
         goto fail;
     }
+
+#ifdef MEASUREMENT
+
+	gettimeofday(&ktv_end, 0);
+
+	print_measurement(ktv_start, ktv_end, &diff);
+
+	printf("mmap measurement: %ld\n", diff);
+
+#endif
+
     ki->map = map;
 
     // Note: madvise(.., MADV_SEQUENTIAL | MADV_WILLNEED) does not seem to
@@ -1016,6 +1056,129 @@ fail:
     return VMI_FAILURE;
 }
 
+static status_t
+munmap_snapshot_dev(
+	    vmi_instance_t vmi, uint64_t memSize)
+{
+    kvm_instance_t *kvm = kvm_get_instance(vmi);
+
+#if USE_MMAP
+    if (kvm->map) {
+        (void) munmap(kvm->map, memSize);
+        kvm->map = 0;
+    }
+#endif // USE_MMAP
+
+    if (kvm->fd) {
+    	shm_unlink(kvm->snapshotShmDevPath);
+        kvm->fd = 0;
+    }
+
+    return VMI_SUCCESS;
+}
+
+
+
+static char *
+exec_peter_kvm_snapshot_shm(
+	    kvm_instance_t *kvm, uint64_t memSize, char* fileName)
+{
+    char *query = (char *) safe_malloc(512);
+
+    sprintf(query, "'{\"execute\": \"snapshot\", \"arguments\": {"
+    		" \"size\": %ld, \"filename\": \"/%s\"}}'", memSize,
+    		fileName);
+
+#ifdef MEASUREMENT
+	struct timeval ktv_start;
+	struct timeval ktv_end;
+	long int diff;
+
+	gettimeofday(&ktv_start, 0);
+#endif
+    char *output = exec_qmp_cmd(kvm, query);
+
+#ifdef MEASUREMENT
+
+	gettimeofday(&ktv_end, 0);
+
+	print_measurement(ktv_start, ktv_end, &diff);
+
+	printf("qmp measurement: %ld\n", diff);
+
+#endif
+
+    free(query);
+    return output;
+
+}
+
+static status_t
+exec_peter_kvm_snapshot_shm_success(
+		char* status)
+{
+	// TODO:
+	/* verify snapshot operation
+	    valid:
+	    invalid:
+	*/
+
+	if (NULL == status) {
+        return VMI_FAILURE;
+    }
+
+    char *ptr = strcasestr(status, "CommandNotFound");
+
+	free(status);
+
+    if (NULL == ptr) {
+        return VMI_SUCCESS;
+    }
+    else {
+        return VMI_FAILURE;
+    }
+}
+
+void setup_snapshot_path(kvm_instance_t* kvm)
+{
+    char tmpPath[256] = "";
+
+	// 1. shm dev path
+	tmpPath[0] = '\0';
+	strcat(tmpPath, "/");
+    strcat(tmpPath, (char *) virDomainGetName(kvm->dom));
+	if (kvm->snapshotShmDevPath) free (kvm->snapshotShmDevPath);
+	kvm->snapshotShmDevPath = strdup(tmpPath);
+
+	// 2. cpu register file path;
+	tmpPath[0] = '\0';
+	strcat(tmpPath, "/tmp/");
+	strcat(tmpPath, (char*)virDomainGetName(kvm->dom));
+	strcat(tmpPath, ".cpu");
+	if (kvm->cpuRegisterFilePath) free(kvm->cpuRegisterFilePath);
+	kvm->cpuRegisterFilePath = strdup(tmpPath);
+}
+
+void teardown_snapshot_path(kvm_instance_t* ki) {
+
+	// 1. shm dev path
+	if (ki->snapshotShmDevPath) {
+		free(ki->snapshotShmDevPath);
+		ki->snapshotShmDevPath = NULL;
+	}
+
+	// 2. cpu register file path;
+    if (ki->cpuRegisterFilePath) {
+   	 free(ki->cpuRegisterFilePath);
+   	 ki->cpuRegisterFilePath = NULL;
+    }
+
+    if (ki->cpuRegistersStr) {
+   	 free(ki->cpuRegistersStr);
+   	 ki->cpuRegistersStr = NULL;
+    }
+}
+
 
 status_t
 kvm_snapshot_vm(
@@ -1023,50 +1186,29 @@ kvm_snapshot_vm(
 {
     printf("snapshot vm\n");
 
-	kvm_instance_t *ki = kvm_get_instance(vmi);
+	kvm_instance_t *kvm = kvm_get_instance(vmi);
+
+	setup_snapshot_path(kvm);
 
 	// 1. pause vm;
 	if (VMI_FAILURE == vmi_pause_vm(vmi)) {
-		printf("fail to pause VM before snapshot, may cause inconsistant state\n");
+		warnprint("fail to pause VM before snapshot, may cause inconsistant state\n");
 	}
 
-	// 2. create pmemsave file;
-	//  2.1. generate random file path;
-    char *tmpfile = tempnam("/tmp", "kvm-");
-	if (ki->filename) free (ki->filename);
-	ki->filename = strdup(tmpfile);
-	free(tmpfile);
-
-	//  2.2. get physical memory size;
-    unsigned long size;
-    if (VMI_FAILURE == kvm_get_memsize(vmi, &size)) {
-    	return VMI_FAILURE;
-    }
-
-    //  2.3. write pmemsave file;
-    printf("start writing pmemsave file\n");
-	char *pmemsave =  exec_pmemsave(ki, size);
-	if (VMI_FAILURE == exec_pmemsave_success(pmemsave)) {
-		printf("fail to create pmemsave snapshot file\n");
-		return VMI_FAILURE;
+    // 2. create peter's qemu shm dev
+    printf("start create peterSnapshot dev\n");
+	char *peterSnapshot =  exec_peter_kvm_snapshot_shm(kvm, vmi->size, kvm->snapshotShmDevPath);
+	if (VMI_FAILURE == exec_peter_kvm_snapshot_shm_success(peterSnapshot)) {
+		errprint("fail to execute qmp snapshot command \n");
+		goto fail;
 	}
-    printf("finish writing pmemsave file\n");
+    printf("finish create peterSnapshot dev\n");
 
-    // 3. create cpu register file;
-    //  3.1 get appending file path;
-    char tmpCpuFileName[256] = "";
-    strcat(tmpCpuFileName, "/tmp");
-    strcat(tmpCpuFileName, ki->filename + strlen("/tmp"));
-    strcat(tmpCpuFileName, ".cpu");
-	if (ki->cpuRegisterFilename) free (ki->cpuRegisterFilename);
-	ki->cpuRegisterFilename = strdup(tmpCpuFileName);
-
-	//  3.2 write cpu register file;
-	char* cpuregs = exec_info_registers(ki);
-	//ki->cpuRegistersStr = cpuregs;
+    // 3. dump cpu registers;
+	char* cpuregs = exec_info_registers(kvm);
     FILE *fhandle = NULL;
-    if ((fhandle = fopen(ki->cpuRegisterFilename, "w+")) == NULL) {
-        errprint("Failed to open cpuRegisterFilename file for writing., errno = %d\n", errno);
+    if ((fhandle = fopen(kvm->cpuRegisterFilePath, "w+")) == NULL) {
+        errprint("Failed to open %s file for writing., errno = %d\n", kvm->cpuRegisterFilePath, errno);
         goto fail;
     }
     uint32_t cpuRegStrLen = strlen(cpuregs);
@@ -1078,35 +1220,35 @@ kvm_snapshot_vm(
 
 	// 4. resume vm;
 	if (VMI_FAILURE == vmi_resume_vm(vmi)) {
-		printf("fail to resume VM after snapshot\n");
-		return VMI_FAILURE;
+		warnprint("fail to resume VM after snapshot\n");
+        goto fail;
 	}
 
-    printf("start mmapping pmemsave file\n");
-
-	// 5. load pmemsave and cpu regs file
-    //  5.1. open and mmap file;
-	if (VMI_FAILURE == mmap_snapshot_file(vmi)) {
-		return VMI_FAILURE;
+    //  5. mmap
+    printf("start mmapping snapshot dev\n");
+	if (VMI_FAILURE == mmap_snapshot_dev(vmi, vmi->size)) {
+        errprint("Failed to mmap snapshot dev\n");
+        goto fail;
 	}
-    printf("finish mmapping pmemsave file\n");
+    printf("finish mmapping snapshot dev\n");
 
-    //  5.2 open and load cpu regs file;
-    if ((fhandle = fopen(ki->cpuRegisterFilename, "r")) == NULL) {
-        errprint("Failed to open cpuRegisterFilename file for reading., errno = %d\n", errno);
+    //  6. load cpu regs from file;
+    if ((fhandle = fopen(kvm->cpuRegisterFilePath, "r")) == NULL) {
+        errprint("Failed to open %s for reading., errno = %d\n", kvm->cpuRegisterFilePath,  errno);
         goto fail;
     }
     size_t readCount = fread(&cpuRegStrLen, sizeof(uint32_t), 1, fhandle);
     cpuregs = safe_malloc(cpuRegStrLen);
     size_t strReadCount = fread(cpuregs, sizeof(char), cpuRegStrLen, fhandle);
-	ki->cpuRegistersStr = cpuregs;
+	kvm->cpuRegistersStr = cpuregs;
     fclose(fhandle);
 
     return VMI_SUCCESS;
 
     fail:
     //TODO: clean up codes.
-    	return VMI_FAILURE;
+    kvm_destroy_snapshot_vm(vmi);
+    return VMI_FAILURE;
 }
 
 status_t
@@ -1139,39 +1281,14 @@ kvm_destroy_snapshot_vm(
              free(status);
      }
 
-	// 2. munmap and close file;
- #if USE_MMAP
-     if (ki->map) {
-         (void) munmap(ki->map, vmi->size);
-         ki->map = 0;
-     }
- #endif // USE_MMAP
-     // ki->fhandle refers to ki->fd; closing both would be an error
-     if (ki->fhandle) {
-         fclose(ki->fhandle);
-         ki->fhandle = 0;
-         ki->fd = 0;
-     }
+     // 2. munmap and unlink dev;
+     munmap_snapshot_dev(vmi, vmi->size);
 
-	// 3. delete pmemsave file;
-     if (remove(ki->filename))
-    	 warnprint("fail to delete %s\n", ki->filename);
-     if (ki->filename) {
-    	 free(ki->filename);
-    	 ki->filename = NULL;
-     }
+     // 3. delete cpu regs file;
+     if (remove(ki->cpuRegisterFilePath))
+    	 warnprint("fail to delete %s\n", ki->cpuRegisterFilePath);
 
-     // 4. delete cpu regs file;
-     if (remove(ki->cpuRegisterFilename))
-    	 warnprint("fail to delete %s\n", ki->cpuRegisterFilename);
-     if (ki->cpuRegisterFilename) {
-    	 free(ki->cpuRegisterFilename);
-    	 ki->cpuRegisterFilename = NULL;
-     }
-     if (ki->cpuRegistersStr) {
-    	 free(ki->cpuRegistersStr);
-    	 ki->cpuRegistersStr = NULL;
-     }
+     teardown_snapshot_path(ki);
 
      return VMI_SUCCESS;
 
