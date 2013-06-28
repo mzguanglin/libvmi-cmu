@@ -15,6 +15,7 @@ all: kern_sym virt_addr read_mem
 clean:
 	rm -rf *.a *.o *~ $(DEPS) kern_sym virt_addr user_virt_addr-linux user_virt_addr-windows read_mem
 
+# put $(LIBS) at last because gcc 4.6.3 complaining.
 kern_sym: kern_sym.c common.c
 	$(CC) $(CFLAGS) $(LDFLAGS)  -o $@ $^ $(LIBS)
 
