@@ -49,6 +49,11 @@
 #include <libvirt/libvirt.h>
 #include <libvirt/virterror.h>
 
+/** exported variable for direct guest memory access
+ * Caution: in gcc 4.6.3, void type pointer arithmetic regards sizeof(void)==1,
+ *   and so the result of "guest_physical_memory + addr_offset" can be reasonable. */
+void* guest_physical_memory = NULL;
+
 // request struct matches a definition in qemu source code
 struct request {
     uint8_t type;   // 0 quit, 1 read, 2 write, ... rest reserved
@@ -1230,6 +1235,7 @@ kvm_snapshot_vm(
         errprint("Failed to mmap snapshot dev\n");
         goto fail;
 	}
+	guest_physical_memory = kvm->map;
     printf("finish mmapping snapshot dev\n");
 
     //  6. load cpu regs from file;

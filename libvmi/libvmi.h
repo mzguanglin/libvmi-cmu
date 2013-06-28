@@ -52,6 +52,11 @@ extern "C" {
 #include <errno.h>
 #include <string.h>
 
+/** exported variable for direct guest memory access
+ * Caution: in gcc 4.6.3, void type pointer arithmetic regards sizeof(void)==1,
+ *   and so the result of "guest_physical_memory + addr_offset" can be reasonable. */
+extern void* guest_physical_memory;
+
 /* uncomment this and recompile to enable debug output */
 //#define VMI_DEBUG
 
