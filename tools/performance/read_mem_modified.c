@@ -80,7 +80,7 @@ int main(int argc, char **argv) {
 		} else {
 			gettimeofday(&ktv_start, 0);
 			for (j = 0; j < buf_size / 4; ++j) {
-				value  =  *(uint32_t *)(guest_physical_memory + start_address + j * 4);
+				memcpy(&value, guest_physical_memory + start_address + j * 4, sizeof(uint32_t));
 			}
 			gettimeofday(&ktv_end, 0);
 		}
