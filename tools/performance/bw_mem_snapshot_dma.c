@@ -13,8 +13,13 @@
 char	*id = "$Id$";
 
 #include "bench.h"
+#include <libvmi.h>
 
 #define TYPE    int
+
+
+vmi_instance_t vmi;
+addr_t start_address;
 
 /*
  * rd - 4 byte read, 32 byte stride
@@ -104,6 +109,19 @@ main(int ac, char **av)
 	    streq(av[optind+1], "fcp") || streq(av[optind+1], "bcopy")) {
 		state.need_buf2 = 1;
 	}
+
+
+	// vmi
+	/* initialize the xen access library */
+    printf("start snapshot VM\n");
+	vmi_init(&vmi, VMI_KVM | VMI_INIT_COMPLETE, "qcxp");
+    if (vmi_snapshot_vm(vmi) != VMI_SUCCESS) {
+        printf("Failed to snapshot VM\n");
+    }
+
+	/* find address to work from */
+	start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
+	start_address = vmi_translate_kv2p(vmi, start_address);
 		
 	if (streq(av[optind+1], "rd")) {
 		benchmp(init_loop, rd, cleanup, 0, parallel, 
@@ -137,6 +155,11 @@ main(int ac, char **av)
 	}
 	adjusted_bandwidth(gettime(), nbytes, 
 			   get_n() * parallel, state.overhead);
+
+
+    vmi_snapshot_destroy(vmi);
+	vmi_destroy(vmi);
+
 	return(0);
 }
 
@@ -153,7 +176,9 @@ init_loop(iter_t iterations, void *cookie)
 
 	if (iterations) return;
 
-        state->buf = (TYPE *)valloc(state->nbytes);
+    //state->buf = (TYPE *)valloc(state->nbytes);
+	// should step start_address pointer here, to prevent cache effect.
+	state->buf = (TYPE *)guest_physical_memory + start_address;
 	state->buf2_orig = NULL;
 	state->lastone = (TYPE*)state->buf - 1;
 	state->lastone = (TYPE*)((char *)state->buf + state->nbytes - 512);
@@ -163,7 +188,7 @@ init_loop(iter_t iterations, void *cookie)
 		perror("malloc");
 		exit(1);
 	}
-	bzero((void*)state->buf, state->nbytes);
+	//bzero((void*)state->buf, state->nbytes);
 
 	if (state->need_buf2 == 1) {
 		state->buf2_orig = state->buf2 = (TYPE *)valloc(state->nbytes + 2048);
@@ -190,7 +215,7 @@ cleanup(iter_t iterations, void *cookie)
 
 	if (iterations) return;
 
-	free(state->buf);
+	//free(state->buf);
 	if (state->buf2_orig) free(state->buf2_orig);
 }
 
