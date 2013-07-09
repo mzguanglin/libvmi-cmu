@@ -42,9 +42,14 @@ int main(int argc, char **argv) {
 
 	char *vm = argv[1];
 	int buf_size = atoi(argv[2]);
+	int buf_src_size = atoi(argv[2]);
 	int loops = atoi(argv[3]);
 	int mode = atoi(argv[4]);
 	unsigned char *buf = malloc(buf_size);
+	unsigned char *buf_src = malloc(buf_size);
+
+	memset(buf, 0, buf_size);
+	memset(buf_src, 0, buf_src_size);
 
 	int i = 0;
 	long int diff;
@@ -58,22 +63,19 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	/* initialize the xen access library */
-	vmi_init(&vmi, VMI_AUTO | VMI_INIT_COMPLETE, vm);
 
-	/* find address to work from */
-	start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
-	start_address = vmi_translate_kv2p(vmi, start_address);
 
 	for (i = 0; i < loops; ++i) {
 		if (mode == 1) {
 			gettimeofday(&ktv_start, 0);
-			vmi_read_pa(vmi, start_address, buf, buf_size);
+
+			memcpy(buf,buf_src, buf_size);
+
 			gettimeofday(&ktv_end, 0);
 		} else {
 			gettimeofday(&ktv_start, 0);
 			for (j = 0; j < buf_size / 4; ++j) {
-				vmi_read_32_pa(vmi, start_address + j * 4, &value);
+				memcpy(&value, buf_src + j * 4, sizeof(uint32_t));
 			}
 			gettimeofday(&ktv_end, 0);
 		}
@@ -86,8 +88,8 @@ int main(int argc, char **argv) {
 
 	avg_measurement(data, loops);
 
-	vmi_destroy(vmi);
+
 	free(buf);
+	free(buf_src);
 	return 0;
 }
-

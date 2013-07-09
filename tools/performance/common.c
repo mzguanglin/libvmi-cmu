@@ -69,7 +69,7 @@ stddev(
  void
 avg_measurement(
     long int *data,
-    int loops) 
+    int loops)
 {
     int i = 0;
     long int sum = 0;
@@ -87,5 +87,44 @@ avg_measurement(
         sum += data[i];
     }
     printf("mean (dropped first-%ld) %f\n", data[0],
-            (double) ((double) sum / ((double) loops - 1.0)));
-} 
+		(double) ((double) sum / ((double) loops - 1.0)));
+
+}
+
+void avg_bandwidth_measurement(
+    long int *data,
+    int loops, uint64_t block_size) {
+
+	int i = 0;
+
+	long int sum = 0;
+
+
+
+	for (i = 0; i < loops; ++i) {
+
+	sum += data[i];
+
+	}
+
+	printf("mean %f, stdev %f\n",
+	            (double) ((double) sum / (double) loops), stddev(data,
+	                                                             loops));
+
+
+	        // repeat avg for all but first measurement
+	        sum = 0;
+
+	for (i = 1; i < loops; ++i) {
+
+	sum += data[i];
+
+	}
+
+	double mean_dropped_first = (double) ((double) sum / ((double) loops - 1.0));
+	printf("mean (dropped first-%ld) %f\n", data[0],
+			mean_dropped_first);
+
+	printf("bandwidth (MB/s): %.2f \n", (double)block_size / 1024 / 1024 / mean_dropped_first * 1000000);
+
+}

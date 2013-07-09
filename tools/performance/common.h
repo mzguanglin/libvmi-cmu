@@ -27,14 +27,20 @@
 #define COMMON_H
     
 #include <stdio.h>
+#include <stdint.h>
 #include <sys/time.h>
 void print_measurement(
     struct timeval ktv_start,
     struct timeval ktv_end,
     long int *diff);
-void avg_measurement(
+
+void avg_measurement(
     long int *data,
     int loops);
+
+void avg_bandwidth_measurement(
+    long int *data,
+    int loops, uint64_t block_size);
 
  
 #endif  /* COMMON_H */
