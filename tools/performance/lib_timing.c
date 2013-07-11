@@ -634,7 +634,9 @@ benchmp_child(benchmp_f initialize,
 	if (benchmp_sigchld_handler != SIG_DFL) {
 		signal(SIGCHLD, benchmp_sigchld_handler);
 	} else {
-		signal(SIGCHLD, benchmp_child_sigchld);
+		// why child process should care SIGCHLD? Note that its handler (cleanup)
+		// will be unpredicted when doing nocancel syscall (e.g. read) - Guanglin
+		//signal(SIGCHLD, benchmp_child_sigchld);
 	}
 
 	if (initialize)
