@@ -478,6 +478,9 @@ benchmp_parent(	int response,
 			}
 		}
 		for (j = 0; j < results->N; ++j) {
+#ifdef _DEBUG
+			printf("results->v[%d].u =%ld, results->v[%d].n =%ld\n", j, results->v[j].u, j, results->v[j].n);
+#endif
 			insertsort(results->v[j].u, 
 				   results->v[j].n, merged_results);
 		}
@@ -712,6 +715,9 @@ benchmp_interval(void* _state)
 		}
 		break;
 	case timing_interval:
+#ifdef _DEBUG
+		printf("iterations = %d, result = %f, enough= %d\n", state->iterations, result, state->enough);
+#endif
 		iterations = state->iterations;
 		if (state->parallel > 1 || result > 0.95 * state->enough) {
 			insertsort(gettime(), get_n(), get_results());
