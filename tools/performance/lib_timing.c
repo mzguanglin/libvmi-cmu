@@ -637,8 +637,13 @@ benchmp_child(benchmp_f initialize,
 	if (benchmp_sigchld_handler != SIG_DFL) {
 		signal(SIGCHLD, benchmp_sigchld_handler);
 	} else {
-		// why child process should care SIGCHLD? Note that its handler (cleanup)
-		// will be unpredicted when doing nocancel syscall (e.g. read) - Guanglin
+		/** why child process should care SIGCHLD and do cleanup()? Although in
+		 * original lmbench, this doesn't damage as child benchmark process never
+		 * create descendents, in our integration with LibVMI, SIGCHLD and
+		 * cleanup() would be triggered unexpectedly and cause !CRASH! as vmi_read_pa()
+		 * API backed by kvm serial interface will create transient virsh subprocess
+		 * through exec_xp().  - Guanglin Xu
+		*/
 		//signal(SIGCHLD, benchmp_child_sigchld);
 	}
 

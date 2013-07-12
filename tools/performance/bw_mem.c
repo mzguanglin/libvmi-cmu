@@ -9,6 +9,8 @@
  * (1) the benchmark is unmodified, and
  * (2) the version in the sccsid below is included in the report.
  * Support for this development by Sun Microsystems is gratefully acknowledged.
+ *
+ * Modified by Guanglin Xu to fit LibVMI (2013).
  */
 char	*id = "$Id$";
 
@@ -23,6 +25,8 @@ addr_t start_address;
 
 /*
  * rd - 4 byte read, 32 byte stride
+ * rd_shm_dgma - read arbitrary blocks from LibVMI SHM DGMA
+ * rd_libvmi - read arbitrary blocks by vmi_read_pa() from LibVMI
  * wr - 4 byte write, 32 byte stride
  * rdwr - 4 byte read followed by 4 byte write to same place, 32 byte stride
  * cp - 4 byte read then 4 byte write to different place, 32 byte stride
@@ -73,7 +77,7 @@ main(int ac, char **av)
 	size_t	nbytes;
 	state_t	state;
 	int	c;
-	char	*usage = "[-P <parallelism>] [-W <warmup>] [-N <repetitions>] <size> what [conflict]\nwhat: rd wr rdwr cp fwr frd fcp bzero bcopy\n<size> must be larger than 512";
+	char	*usage = "[-P <parallelism>] [-W <warmup>] [-N <repetitions>] <size> what [conflict]\nwhat: rd rd_shm_dgma rd_libvmi wr rdwr cp fwr frd fcp bzero bcopy\n<size> must be larger than 512\n";
 
 	state.overhead = 0;
 
@@ -120,9 +124,9 @@ main(int ac, char **av)
 
 		// vmi initialize
 		vmi_init(&vmi, VMI_KVM | VMI_INIT_COMPLETE, "qcxp");
-	    if (vmi_snapshot_vm(vmi) != VMI_SUCCESS) {
-	        printf("Failed to snapshot VM\n");
-	    }
+	    	if (vmi_snapshot_vm(vmi) != VMI_SUCCESS) {
+			printf("Failed to snapshot VM\n");
+		}
 		/* find address to work from */
 		start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
 		start_address = vmi_translate_kv2p(vmi, start_address);
