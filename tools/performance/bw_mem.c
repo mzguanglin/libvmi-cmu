@@ -71,18 +71,22 @@ void	adjusted_bandwidth(uint64 t, uint64 b, uint64 iter, double ovrhd);
 int
 main(int ac, char **av)
 {
+	char domainName[256] = "";
 	int	parallel = 1;
 	int	warmup = 0;
 	int	repetitions = TRIES;
 	size_t	nbytes;
 	state_t	state;
 	int	c;
-	char	*usage = "[-P <parallelism>] [-W <warmup>] [-N <repetitions>] <size> what [conflict]\nwhat: rd rd_shm_dgma rd_libvmi wr rdwr cp fwr frd fcp bzero bcopy\n<size> must be larger than 512\n";
+	char	*usage = "[-V <libvirt domain name>] [-P <parallelism>] [-W <warmup>] [-N <repetitions>] <size> what [conflict]\nwhat: rd rd_shm_dgma rd_libvmi wr rdwr cp fwr frd fcp bzero bcopy\n<size> must be larger than 512\n";
 
 	state.overhead = 0;
 
-	while (( c = getopt(ac, av, "P:W:N:")) != EOF) {
+	while (( c = getopt(ac, av, "V:P:W:N:")) != EOF) {
 		switch(c) {
+		case 'V':
+			strcpy(domainName, optarg);
+			break;
 		case 'P':
 			parallel = atoi(optarg);
 			if (parallel <= 0) lmbench_usage(ac, av, usage);
@@ -122,10 +126,16 @@ main(int ac, char **av)
 			warmup, repetitions, &state);
 	} else if (streq(av[optind+1], "rd_shm_dgma")) {
 
+		if (streq(domainName, "")) {
+			printf("%s require -V <libvirt domain name>\n", av[optind+1]);
+			return 0;
+		}
+
 		// vmi initialize
-		vmi_init(&vmi, VMI_KVM | VMI_INIT_COMPLETE, "qcxp");
+		vmi_init(&vmi, VMI_KVM | VMI_INIT_COMPLETE, domainName);
 	    	if (vmi_snapshot_vm(vmi) != VMI_SUCCESS) {
 			printf("Failed to snapshot VM\n");
+			return 0;
 		}
 		/* find address to work from */
 		start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
@@ -139,8 +149,13 @@ main(int ac, char **av)
 		vmi_destroy(vmi);
 	}   else if (streq(av[optind+1], "rd_libvmi")) {
 
+		if (streq(domainName, "")) {
+			printf("%s require -V <libvirt domain name>\n", av[optind+1]);
+			return 0;
+		}
+
 		// vmi initialize
-		vmi_init(&vmi, VMI_KVM | VMI_INIT_COMPLETE, "qcxp");
+		vmi_init(&vmi, VMI_KVM | VMI_INIT_COMPLETE, domainName);
 		// find address to work from
 		start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
 		start_address = vmi_translate_kv2p(vmi, start_address);
@@ -227,6 +242,11 @@ init_loop(iter_t iterations, void *cookie)
 	}
 }
 
+/**
+ * init_loop_shm_dgma
+ * Initialize benchmark environment. This would be invoked by benchmark
+ * sub-process in every iteration. - Guanglin Xu
+ */
 void
 init_loop_shm_dgma(iter_t iterations, void *cookie)
 {
@@ -274,6 +294,11 @@ cleanup(iter_t iterations, void *cookie)
 	if (state->buf2_orig) free(state->buf2_orig);
 }
 
+/**
+ * cleanup_shm_dgma
+ * Cleanup benchmark environment. This would be invoked by benchmark
+ * sub-process in every iteration. - Guanglin Xu
+ */
 void
 cleanup_shm_dgma(iter_t iterations, void *cookie)
 {
@@ -309,6 +334,11 @@ rd(iter_t iterations, void *cookie)
 }
 #undef	DOIT
 
+/**
+ * rd_libvmi
+ * Read memory regions by LibVMI API. This would be invoked by benchmark sub-process.
+ * - Guanglin Xu
+ */
 void
 rd_libvmi(iter_t iterations, void *cookie)
 {
