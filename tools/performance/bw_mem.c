@@ -13,8 +13,13 @@
 char	*id = "$Id$";
 
 #include "bench.h"
+#include <libvmi.h>
 
 #define TYPE    int
+
+
+vmi_instance_t vmi;
+addr_t start_address;
 
 /*
  * rd - 4 byte read, 32 byte stride
@@ -30,6 +35,7 @@ char	*id = "$Id$";
  * XXX - do a 64bit version of this.
  */
 void	rd(iter_t iterations, void *cookie);
+void	rd_libvmi(iter_t iterations, void *cookie);
 void	wr(iter_t iterations, void *cookie);
 void	rdwr(iter_t iterations, void *cookie);
 void	mcp(iter_t iterations, void *cookie);
@@ -40,7 +46,9 @@ void	loop_bzero(iter_t iterations, void *cookie);
 void	loop_bcopy(iter_t iterations, void *cookie);
 void	init_overhead(iter_t iterations, void *cookie);
 void	init_loop(iter_t iterations, void *cookie);
+void	init_loop_shm_dgma(iter_t iterations, void *cookie);
 void	cleanup(iter_t iterations, void *cookie);
+void	cleanup_shm_dgma(iter_t iterations, void *cookie);
 
 typedef struct _state {
 	double	overhead;
@@ -104,11 +112,41 @@ main(int ac, char **av)
 	    streq(av[optind+1], "fcp") || streq(av[optind+1], "bcopy")) {
 		state.need_buf2 = 1;
 	}
-		
+
 	if (streq(av[optind+1], "rd")) {
 		benchmp(init_loop, rd, cleanup, 0, parallel, 
 			warmup, repetitions, &state);
-	} else if (streq(av[optind+1], "wr")) {
+	} else if (streq(av[optind+1], "rd_shm_dgma")) {
+
+		// vmi initialize
+		vmi_init(&vmi, VMI_KVM | VMI_INIT_COMPLETE, "qcxp");
+	    if (vmi_snapshot_vm(vmi) != VMI_SUCCESS) {
+	        printf("Failed to snapshot VM\n");
+	    }
+		/* find address to work from */
+		start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
+		start_address = vmi_translate_kv2p(vmi, start_address);
+
+		benchmp(init_loop_shm_dgma, rd, cleanup_shm_dgma, 0, parallel,
+			warmup, repetitions, &state);
+
+		// vmi cleanup
+		vmi_snapshot_destroy(vmi);
+		vmi_destroy(vmi);
+	}   else if (streq(av[optind+1], "rd_libvmi")) {
+
+		// vmi initialize
+		vmi_init(&vmi, VMI_KVM | VMI_INIT_COMPLETE, "qcxp");
+		// find address to work from
+		start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
+		start_address = vmi_translate_kv2p(vmi, start_address);
+
+		benchmp(init_loop, rd_libvmi, cleanup, 0, parallel,
+			warmup, repetitions, &state);
+
+		// vmi cleanup
+		vmi_destroy(vmi);
+	}  else if (streq(av[optind+1], "wr")) {
 		benchmp(init_loop, wr, cleanup, 0, parallel, 
 			warmup, repetitions, &state);
 	} else if (streq(av[optind+1], "rdwr")) {
@@ -135,8 +173,10 @@ main(int ac, char **av)
 	} else {
 		lmbench_usage(ac, av, usage);
 	}
+
 	adjusted_bandwidth(gettime(), nbytes, 
 			   get_n() * parallel, state.overhead);
+
 	return(0);
 }
 
@@ -153,7 +193,7 @@ init_loop(iter_t iterations, void *cookie)
 
 	if (iterations) return;
 
-        state->buf = (TYPE *)valloc(state->nbytes);
+    state->buf = (TYPE *)valloc(state->nbytes);
 	state->buf2_orig = NULL;
 	state->lastone = (TYPE*)state->buf - 1;
 	state->lastone = (TYPE*)((char *)state->buf + state->nbytes - 512);
@@ -164,6 +204,42 @@ init_loop(iter_t iterations, void *cookie)
 		exit(1);
 	}
 	bzero((void*)state->buf, state->nbytes);
+
+	if (state->need_buf2 == 1) {
+		state->buf2_orig = state->buf2 = (TYPE *)valloc(state->nbytes + 2048);
+		if (!state->buf2) {
+			perror("malloc");
+			exit(1);
+		}
+
+		/* default is to have stuff unaligned wrt each other */
+		/* XXX - this is not well tested or thought out */
+		if (state->aligned) {
+			char	*tmp = (char *)state->buf2;
+
+			tmp += 2048 - 128;
+			state->buf2 = (TYPE *)tmp;
+		}
+	}
+}
+
+void
+init_loop_shm_dgma(iter_t iterations, void *cookie)
+{
+	state_t *state = (state_t *) cookie;
+
+	if (iterations) return;
+
+	state->buf = (TYPE *)guest_physical_memory + start_address;
+	state->buf2_orig = NULL;
+	state->lastone = (TYPE*)state->buf - 1;
+	state->lastone = (TYPE*)((char *)state->buf + state->nbytes - 512);
+	state->N = state->nbytes;
+
+	if (!state->buf) {
+		perror("malloc");
+		exit(1);
+	}
 
 	if (state->need_buf2 == 1) {
 		state->buf2_orig = state->buf2 = (TYPE *)valloc(state->nbytes + 2048);
@@ -195,6 +271,16 @@ cleanup(iter_t iterations, void *cookie)
 }
 
 void
+cleanup_shm_dgma(iter_t iterations, void *cookie)
+{
+	state_t *state = (state_t *) cookie;
+
+	if (iterations) return;
+
+	if (state->buf2_orig) free(state->buf2_orig);
+}
+
+void
 rd(iter_t iterations, void *cookie)
 {	
 	state_t *state = (state_t *) cookie;
@@ -214,6 +300,23 @@ rd(iter_t iterations, void *cookie)
 		p[124];
 		p +=  128;
 	    }
+	}
+	use_int(sum);
+}
+#undef	DOIT
+
+void
+rd_libvmi(iter_t iterations, void *cookie)
+{
+	state_t *state = (state_t *) cookie;
+	register TYPE *lastone = state->lastone;
+	register int sum = 0;
+
+	while (iterations-- > 0) {
+	    register TYPE *p = state->buf;
+
+		vmi_read_pa(vmi, start_address, p, state->nbytes);
+
 	}
 	use_int(sum);
 }
