@@ -19,9 +19,10 @@ char	*id = "$Id$";
 
 #define TYPE    int
 
-
 vmi_instance_t vmi;
 addr_t start_address;
+
+char domainName[256] = "";
 
 /*
  * rd - 4 byte read, 32 byte stride
@@ -50,8 +51,10 @@ void	loop_bzero(iter_t iterations, void *cookie);
 void	loop_bcopy(iter_t iterations, void *cookie);
 void	init_overhead(iter_t iterations, void *cookie);
 void	init_loop(iter_t iterations, void *cookie);
+void	init_loop_libvmi(iter_t iterations, void *cookie);
 void	init_loop_shm_dgma(iter_t iterations, void *cookie);
 void	cleanup(iter_t iterations, void *cookie);
+void	cleanup_libvmi(iter_t iterations, void *cookie);
 void	cleanup_shm_dgma(iter_t iterations, void *cookie);
 
 typedef struct _state {
@@ -71,7 +74,6 @@ void	adjusted_bandwidth(uint64 t, uint64 b, uint64 iter, double ovrhd);
 int
 main(int ac, char **av)
 {
-	char domainName[256] = "";
 	int	parallel = 1;
 	int	warmup = 0;
 	int	repetitions = TRIES;
@@ -154,17 +156,9 @@ main(int ac, char **av)
 			return 0;
 		}
 
-		// vmi initialize
-		vmi_init(&vmi, VMI_KVM | VMI_INIT_COMPLETE, domainName);
-		// find address to work from
-		start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
-		start_address = vmi_translate_kv2p(vmi, start_address);
-
-		benchmp(init_loop, rd_libvmi, cleanup, 0, parallel,
+		benchmp(init_loop_libvmi, rd_libvmi, cleanup_libvmi, 0, parallel,
 			warmup, repetitions, &state);
 
-		// vmi cleanup
-		vmi_destroy(vmi);
 	}  else if (streq(av[optind+1], "wr")) {
 		benchmp(init_loop, wr, cleanup, 0, parallel, 
 			warmup, repetitions, &state);
@@ -242,6 +236,48 @@ init_loop(iter_t iterations, void *cookie)
 	}
 }
 
+void
+init_loop_libvmi(iter_t iterations, void *cookie) {
+	state_t *state = (state_t *) cookie;
+
+	if (iterations) return;
+
+	// vmi initialize
+	vmi_init(&vmi, VMI_AUTO | VMI_INIT_COMPLETE, "xenxp");
+	// find address to work from
+	start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
+	start_address = vmi_translate_kv2p(vmi, start_address);
+
+    state->buf = (TYPE *)valloc(state->nbytes);
+	state->buf2_orig = NULL;
+	state->lastone = (TYPE*)state->buf - 1;
+	state->lastone = (TYPE*)((char *)state->buf + state->nbytes - 512);
+	state->N = state->nbytes;
+
+	if (!state->buf) {
+		perror("malloc");
+		exit(1);
+	}
+	bzero((void*)state->buf, state->nbytes);
+
+	if (state->need_buf2 == 1) {
+		state->buf2_orig = state->buf2 = (TYPE *)valloc(state->nbytes + 2048);
+		if (!state->buf2) {
+			perror("malloc");
+			exit(1);
+		}
+
+		/* default is to have stuff unaligned wrt each other */
+		/* XXX - this is not well tested or thought out */
+		if (state->aligned) {
+			char	*tmp = (char *)state->buf2;
+
+			tmp += 2048 - 128;
+			state->buf2 = (TYPE *)tmp;
+		}
+	}
+}
+
 /**
  * init_loop_shm_dgma
  * Initialize benchmark environment. This would be invoked by benchmark
@@ -287,11 +323,23 @@ void
 cleanup(iter_t iterations, void *cookie)
 {
 	state_t *state = (state_t *) cookie;
+printf("cleanup iterations = %d\n", iterations);
+	if (iterations) return;
+
+	free(state->buf);
+	if (state->buf2_orig) free(state->buf2_orig);
+}
+
+void
+cleanup_libvmi(iter_t iterations, void *cookie) {
+	state_t *state = (state_t *) cookie;
 
 	if (iterations) return;
 
 	free(state->buf);
 	if (state->buf2_orig) free(state->buf2_orig);
+
+	vmi_destroy(vmi);
 }
 
 /**
