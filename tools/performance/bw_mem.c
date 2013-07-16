@@ -133,22 +133,12 @@ main(int ac, char **av)
 			return 0;
 		}
 
-		// vmi initialize
-		vmi_init(&vmi, VMI_KVM | VMI_INIT_COMPLETE, domainName);
-	    	if (vmi_snapshot_vm(vmi) != VMI_SUCCESS) {
-			printf("Failed to snapshot VM\n");
-			return 0;
-		}
-		/* find address to work from */
-		start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
-		start_address = vmi_translate_kv2p(vmi, start_address);
+
 
 		benchmp(init_loop_shm_dgma, rd, cleanup_shm_dgma, 0, parallel,
 			warmup, repetitions, &state);
 
-		// vmi cleanup
-		vmi_snapshot_destroy(vmi);
-		vmi_destroy(vmi);
+
 	}   else if (streq(av[optind+1], "rd_libvmi")) {
 
 		if (streq(domainName, "")) {
@@ -290,6 +280,17 @@ init_loop_shm_dgma(iter_t iterations, void *cookie)
 
 	if (iterations) return;
 
+	// vmi initialize
+	vmi_init(&vmi, VMI_KVM | VMI_INIT_COMPLETE, domainName);
+    	if (vmi_snapshot_vm(vmi) != VMI_SUCCESS) {
+		printf("Failed to snapshot VM\n");
+		return;
+	}
+	/* find address to work from */
+	start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
+	start_address = vmi_translate_kv2p(vmi, start_address);
+
+
 	state->buf = (TYPE *)guest_physical_memory + start_address;
 	state->buf2_orig = NULL;
 	state->lastone = (TYPE*)state->buf - 1;
@@ -355,6 +356,10 @@ cleanup_shm_dgma(iter_t iterations, void *cookie)
 	if (iterations) return;
 
 	if (state->buf2_orig) free(state->buf2_orig);
+
+	// vmi cleanup
+	vmi_snapshot_destroy(vmi);
+	vmi_destroy(vmi);
 }
 
 void
