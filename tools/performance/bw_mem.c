@@ -243,7 +243,7 @@ init_loop_libvmi(iter_t iterations, void *cookie) {
 	if (iterations) return;
 
 	// vmi initialize
-	vmi_init(&vmi, VMI_AUTO | VMI_INIT_COMPLETE, "xenxp");
+	vmi_init(&vmi, VMI_AUTO | VMI_INIT_COMPLETE, domainName);
 	// find address to work from
 	start_address = vmi_translate_ksym2v(vmi, "PsInitialSystemProcess");
 	start_address = vmi_translate_kv2p(vmi, start_address);
@@ -323,7 +323,7 @@ void
 cleanup(iter_t iterations, void *cookie)
 {
 	state_t *state = (state_t *) cookie;
-printf("cleanup iterations = %d\n", iterations);
+
 	if (iterations) return;
 
 	free(state->buf);
